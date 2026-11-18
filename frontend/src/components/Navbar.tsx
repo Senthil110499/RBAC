@@ -1,19 +1,22 @@
 import { useState, useEffect, useRef } from "react";
+import { Menu, ChevronDown, LogOut, UserRound } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { useLocation } from "react-router-dom";
 
-export default function Navbar() {
+interface NavbarProps {
+  sidebarOpen: boolean;
+  setSidebarOpen: (open: boolean) => void;
+}
+
+export default function Navbar({ sidebarOpen, setSidebarOpen }: NavbarProps) {
   const { logout, user } = useAuth();
   const [open, setOpen] = useState(false);
-  const { pathname } = useLocation();
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
-  // function to map pathname → title
-  const getPageTitle = () => {
-    if (pathname.includes("dashboard")) return "Dashboard";
-    if (pathname.includes("users")) return "Users";
-    if (pathname.includes("settings")) return "Settings";
-    return "Role Based Authentication"; // default
+  const goToProfile = () => {
+    setOpen(false);
+    navigate("/settings?tab=profile");
   };
 
   // Close dropdown when clicking outside
@@ -28,29 +31,44 @@ export default function Navbar() {
   }, []);
 
   return (
-    <div className="navbar">
+    <header className="navbar">
       <div className="navbar-left">
-        <span>{getPageTitle()}</span>
+        <button
+          className="menu-btn"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          aria-label="Toggle sidebar"
+        >
+          <Menu size={24} />
+        </button>
+        <span className="navbar-brand">RBAC</span>
       </div>
+
       {user && (
         <div className="profile-container" ref={dropdownRef}>
-          <div className="profile-logo" onClick={() => setOpen(!open)}>
-            <img src="/users-icon.jpg" alt="Profile" />
-          </div>
+          <button className="profile-trigger" onClick={() => setOpen(!open)}>
+            <span className="profile-logo">
+              <img src="/users-icon.jpg" alt="Profile" />
+            </span>
+            <ChevronDown size={20} className={`profile-chevron ${open ? "open" : ""}`} />
+          </button>
 
           {open && (
             <div className="dropdown">
-              <p className="dropdown-item">
+              <div className="dropdown-head">
                 <strong>{user.name || user.email}</strong>
-              </p>
-              <p className="dropdown-item">Role: {user.role}</p>
-              <button className="dropdown-item logout" onClick={logout}>
-                Logout
+                <span>{user.email}</span>
+                <span className="dropdown-role">{user.role}</span>
+              </div>
+              <button className="dropdown-action" onClick={goToProfile}>
+                <UserRound size={16} /> Profile
+              </button>
+              <button className="dropdown-logout" onClick={logout}>
+                <LogOut size={16} /> Logout
               </button>
             </div>
           )}
         </div>
       )}
-    </div>
+    </header>
   );
 }

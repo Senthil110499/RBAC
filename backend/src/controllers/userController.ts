@@ -7,6 +7,7 @@ import { generateToken } from "../utils/token";
 import { sendAccountCreatedMail } from "../utils/mailer";
 const prisma = new PrismaClient();
 import { Prisma } from "@prisma/client";
+import { importRowSchema } from "../validation/schemas";
 
 const getStartOfWeek = () => {
   const now = new Date();
@@ -20,46 +21,56 @@ const getStartOfMonth = () => {
   return new Date(now.getFullYear(), now.getMonth(), 1);
 };
 
+const findDuplicateName = async (name: string, excludeId?: number) => {
+  return prisma.user.findFirst({
+    where: {
+      name: { equals: name, mode: "insensitive" },
+      ...(excludeId !== undefined ? { id: { not: excludeId } } : {}),
+    },
+  });
+};
+
+const duplicateConflictMessage = (nameTaken: boolean, emailTaken: boolean) => {
+  if (nameTaken && emailTaken) return "User already exists";
+  if (nameTaken) return "User name already exists";
+  if (emailTaken) return "User email already exists";
+  return null;
+};
+
 export const createUser = async (req: Request, res: Response) => {
   try {
-    const { name, email, role } = req.body;
-    if (!name || !email || !role) {
-      return res.status(400).json({ message: "Missing required fields" });
+    const { name, email, role } = req.body; // validated by createUserSchema
+
+    const [existingByEmail, existingByName] = await Promise.all([
+      prisma.user.findUnique({ where: { email } }),
+      findDuplicateName(name),
+    ]);
+
+    const conflict = duplicateConflictMessage(!!existingByName, !!existingByEmail);
+    if (conflict) {
+      return res.status(400).json({ message: conflict });
     }
 
-    let user = await prisma.user.findUnique({ where: { email } });
-    let tempPassword: string | null = null;
+    // Generate a temporary password
+    const tempPassword = Math.random().toString(36).slice(-8);
+    const hashed = await bcrypt.hash(tempPassword, 10);
 
-    if (!user) {
-      // Generate a temporary password
-      tempPassword = Math.random().toString(36).slice(-8);
-        const hashed = await bcrypt.hash(tempPassword, 10);
-        
-        const permissions =
-          role === "SUPERADMIN"
-            ? [
-                "read",
-                "write",
-                "update",
-                "delete",
-              ]
-            : role === "ADMIN"
-            ? ["read", "write", "update"]
-            : ["read"];
+    const permissions =
+      role === "SUPERADMIN"
+        ? ["read", "write", "update", "delete"]
+        : role === "ADMIN"
+        ? ["read", "write", "update"]
+        : ["read"];
 
-      // Create user
-      user = await prisma.user.create({
-        data: {
-          name,
-          email,
-          role,
-          permissions: permissions || [],
-          password: hashed,
-        },
-      });
-    } else {
-      return res.status(400).json({ message: "User already exists" });
-    }
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        role,
+        permissions: permissions || [],
+        password: hashed,
+      },
+    });
 
     // Generate token & login link
     const token = generateToken(user);
@@ -118,11 +129,81 @@ export const createUser = async (req: Request, res: Response) => {
 };
 
 
-export const getUsers = async (_req: Request, res: Response) => {
-  const users = await prisma.user.findMany({
-    orderBy: { createdAt: "asc" },
-  });
-  res.json(users);
+const PAGE_SIZES = [10, 25, 50, 100];
+
+// Never send password hashes to the client
+const userListSelect = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  permissions: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.UserSelect;
+
+// GET /users
+//   - without `page`: full list (used by the dashboard)
+//   - with `page`: paginated list → { data, total, page, limit, totalPages }
+//     query: page, limit (10 | 25 | 50 | 100), search, role, status, fromDate, toDate
+export const getUsers = async (req: Request, res: Response) => {
+  try {
+    if (req.query.page === undefined) {
+      const users = await prisma.user.findMany({
+        orderBy: { createdAt: "asc" },
+        select: userListSelect,
+      });
+      return res.json(users);
+    }
+
+    const page = Math.max(1, parseInt(String(req.query.page), 10) || 1);
+    const requestedLimit = parseInt(String(req.query.limit), 10);
+    const limit = PAGE_SIZES.includes(requestedLimit) ? requestedLimit : PAGE_SIZES[0];
+
+    const { search, role, status, fromDate, toDate } = req.query;
+
+    // Superadmins are never listed in the users table
+    const where: Prisma.UserWhereInput = { role: { not: "SUPERADMIN" } };
+    if (role && role !== "SUPERADMIN") where.role = String(role);
+    if (status) where.status = { equals: String(status), mode: "insensitive" };
+    if (search && String(search).trim()) {
+      const term = String(search).trim();
+      where.OR = [
+        { name: { contains: term, mode: "insensitive" } },
+        { email: { contains: term, mode: "insensitive" } },
+      ];
+    }
+    if (fromDate && toDate) {
+      const from = new Date(String(fromDate));
+      from.setHours(0, 0, 0, 0);
+      const to = new Date(String(toDate));
+      to.setHours(23, 59, 59, 999);
+      where.createdAt = { gte: from, lte: to };
+    }
+
+    const [total, users] = await prisma.$transaction([
+      prisma.user.count({ where }),
+      prisma.user.findMany({
+        where,
+        orderBy: { createdAt: "asc" },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: userListSelect,
+      }),
+    ]);
+
+    res.json({
+      data: users,
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch users" });
+  }
 };
 
 
@@ -169,11 +250,33 @@ export const updateUser = async (req: Request, res: Response) => {
             : ["read"];
   }
 
+  const nextName = name ?? existingUser.name;
+  const nextEmail = email ?? existingUser.email;
+
+  const nameChanged =
+    typeof nextName === "string" &&
+    nextName.toLowerCase() !== (existingUser.name ?? "").toLowerCase();
+  const emailChanged = nextEmail !== existingUser.email;
+
+  const [existingByEmail, existingByName] = await Promise.all([
+    emailChanged
+      ? prisma.user.findUnique({ where: { email: nextEmail } })
+      : Promise.resolve(null),
+    nameChanged && typeof nextName === "string"
+      ? findDuplicateName(nextName, userId)
+      : Promise.resolve(null),
+  ]);
+
+  const conflict = duplicateConflictMessage(!!existingByName, !!existingByEmail);
+  if (conflict) {
+    return res.status(400).json({ message: conflict });
+  }
+
   const updatedUser = await prisma.user.update({
     where: { id: userId },
     data: {
-      name: name ?? existingUser.name,
-      email: email ?? existingUser.email,
+      name: nextName,
+      email: nextEmail,
       role: role ?? existingUser.role,
       permissions,
     },
@@ -315,16 +418,42 @@ export const uploadExcel = async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Excel file is empty" });
     }
 
+    // Validate every row first; reject the whole file if any row is invalid
+    const rowErrors: string[] = [];
+    const validRows: { name: string | null; email: string; role: string; status: string }[] = [];
+    const seenEmails = new Set<string>();
+
+    jsonData.forEach((raw, index) => {
+      const row = Object.fromEntries(
+        Object.entries(raw).map(([k, v]) => [k.trim().toLowerCase(), v])
+      );
+      const rowNumber = index + 2; // +1 for header, +1 for 1-based rows
+      const parsed = importRowSchema.safeParse(row);
+      if (!parsed.success) {
+        rowErrors.push(`Row ${rowNumber}: ${parsed.error.issues[0].message}`);
+        return;
+      }
+      const key = parsed.data.email.toLowerCase();
+      if (seenEmails.has(key)) {
+        rowErrors.push(`Row ${rowNumber}: duplicate email ${parsed.data.email}`);
+        return;
+      }
+      seenEmails.add(key);
+      validRows.push(parsed.data);
+    });
+
+    if (rowErrors.length) {
+      const shown = rowErrors.slice(0, 10).join("; ");
+      const more = rowErrors.length > 10 ? ` (+${rowErrors.length - 10} more)` : "";
+      return res.status(400).json({ error: `Invalid rows: ${shown}${more}`, errors: rowErrors });
+    }
+
     // Prepare all users
     const usersToCreate: any[] = [];
     const emailJobs: Promise<any>[] = [];
 
-    for (const row of jsonData) {
-      const name = row.name || null;
-      const email = row.email;
-      const role = row.role?.toUpperCase() || "USER";
-
-      if (!email || !role) continue; // skip invalid rows
+    for (const row of validRows) {
+      const { name, email, role } = row;
 
       // generate temp password
       const tempPassword = Math.random().toString(36).slice(-8);
@@ -344,7 +473,7 @@ export const uploadExcel = async (req: Request, res: Response) => {
         role,
         permissions,
         password: hashed,
-        status: row.status?.toLowerCase() || "active",
+        status: row.status,
       });
 
       // prepare email

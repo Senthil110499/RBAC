@@ -1,119 +1,16 @@
-// // src/components/FilterModal.tsx
-// import { useState, useEffect } from "react";
-// import type { Role, Status } from "../types";
-
-// interface FilterModalProps {
-//   visible: boolean;
-//   onClose: () => void;
-//   onApply: (filters: {
-//     role: Role | "";
-//     status: Status | "";
-//     month: number | "";
-//   }) => void;
-//   initialFilters: {
-//     role: Role | "";
-//     status: Status | "";
-//     month: number | "";
-//   };
-// }
-
-// export default function FilterModal({
-//   visible,
-//   onClose,
-//   onApply,
-//   initialFilters,
-// }: FilterModalProps) {
-//   const [role, setRole] = useState<Role | "">(initialFilters.role);
-//   const [status, setStatus] = useState<Status | "">(initialFilters.status);
-//   const [month, setMonth] = useState<number | "">(initialFilters.month);
-
-//   useEffect(() => {
-//     // when modal opens, sync state with current filters
-//     if (visible) {
-//       setRole(initialFilters.role);
-//       setStatus(initialFilters.status);
-//       setMonth(initialFilters.month);
-//     }
-//   }, [visible, initialFilters]);
-
-//   if (!visible) return null;
-
-//   const handleReset = () => {
-//     setRole("");
-//     setStatus("");
-//     setMonth("");
-//   };
-
-//   const handleApply = () => {
-//     onApply({ role, status, month });
-//     onClose();
-//   };
-
-//   return (
-//     <div className="modal-backdrop">
-//       <div className="modal-card">
-//         <h3 className="modal-title">Filters</h3>
-
-//         <label>Roles</label>
-//         <select
-//           className="modal-input"
-//           value={role}
-//           onChange={(e) => setRole(e.target.value as Role)}
-//         >
-//           <option value="">All Roles</option>
-//           <option value="ADMIN">Admin</option>
-//           <option value="USER">User</option>
-//         </select>
-        
-
-//         <label>Status</label>
-//         <select
-//           className="modal-input"
-//           value={status}
-//           onChange={(e) => setStatus(e.target.value as Status | "")}
-//         >
-//           <option value="">All Status</option>
-//           <option value="active">Active</option>
-//           <option value="Inactive">Inactive</option>
-//         </select>
-        
-
-//         <label>Month</label>
-//         <select
-//           className="modal-input"
-//           value={month}
-//           onChange={(e) =>
-//             setMonth(e.target.value ? Number(e.target.value) : "")
-//           }
-//         >
-//           <option value="">All Months</option>
-//           {Array.from({ length: 12 }, (_, i) => (
-//             <option key={i + 1} value={i + 1}>
-//               {new Date(0, i).toLocaleString("default", { month: "long" })}
-//             </option>
-//           ))}
-//         </select>
-
-//         <div className="modal-actions">
-//           <button className="btn-secondary" onClick={handleReset}>
-//             Reset
-//           </button>
-//           <button className="btn-primary" onClick={handleApply}>
-//             Apply
-//           </button>
-//         </div>
-//       </div>
-//     </div>
-//   );
-// }
 
 // src/components/FilterModal.tsx
-import { useState, useEffect } from "react";
-import { Modal, Select, Button, Form, DatePicker } from "antd";
+import { useEffect } from "react";
+import { Modal, Select, Button, Form, DatePicker, Row, Col } from "antd";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import type { Role, Status } from "../types";
-import dayjs, { Dayjs } from "dayjs";
+import dayjs from "dayjs";
+import { CalendarDays } from "lucide-react";
+import { userFilterSchema, type UserFilterValues } from "../validation/schemas";
 
-const { RangePicker } = DatePicker;
+const DATE_FORMAT = "DD MMM YYYY";
+const EMPTY_FILTERS: UserFilterValues = { role: "", status: "", fromDate: null, toDate: null };
 
 interface FilterModalProps {
   visible: boolean;
@@ -138,104 +35,162 @@ export default function FilterModal({
   onApply,
   initialFilters,
 }: FilterModalProps) {
-  const [role, setRole] = useState<Role | "">(initialFilters.role);
-  const [status, setStatus] = useState<Status | "">(initialFilters.status);
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
-  const [loading, setLoading] = useState(false);
+  const {
+    control,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<UserFilterValues>({
+    resolver: zodResolver(userFilterSchema),
+    mode: "onChange",
+    defaultValues: EMPTY_FILTERS,
+  });
+
+  const fromDate = watch("fromDate");
+  const toDate = watch("toDate");
 
   useEffect(() => {
     if (visible) {
-      setRole(initialFilters.role);
-      setStatus(initialFilters.status);
-      setDateRange(
-        initialFilters.fromDate && initialFilters.toDate
-          ? [dayjs(initialFilters.fromDate), dayjs(initialFilters.toDate)]
-          : null
-      );
-    }
-  }, [visible, initialFilters]);
-
-  const handleApply = async () => {
-    setLoading(true);
-    try {
-      onApply({
-        role,
-        status,
-        fromDate: dateRange ? dateRange[0].format("YYYY-MM-DD") : "",
-        toDate: dateRange ? dateRange[1].format("YYYY-MM-DD") : "",
+      reset({
+        role: initialFilters.role === "SUPERADMIN" ? "" : initialFilters.role,
+        status: initialFilters.status,
+        fromDate: initialFilters.fromDate ? dayjs(initialFilters.fromDate) : null,
+        toDate: initialFilters.toDate ? dayjs(initialFilters.toDate) : null,
       });
-      onClose();
-    } finally {
-      setTimeout(() => setLoading(false), 500);
     }
+  }, [visible, initialFilters, reset]);
+
+  const onSubmit = (values: UserFilterValues) => {
+    onApply({
+      role: values.role,
+      status: values.status,
+      // The users filter needs both ends: an open "to" means up to today
+      fromDate: values.fromDate ? values.fromDate.format("YYYY-MM-DD") : values.toDate ? "2000-01-01" : "",
+      toDate: values.toDate ? values.toDate.format("YYYY-MM-DD") : values.fromDate ? dayjs().format("YYYY-MM-DD") : "",
+    });
+    onClose();
   };
 
-  return (
-    <>
-      {loading && (
-        <div className="overlay">
-          <div className="spinner"></div>
-        </div>
-      )}
+  const handleReset = () => reset(EMPTY_FILTERS);
 
-    <Modal 
+  const fieldStatus = (name: keyof UserFilterValues) => ({
+    validateStatus: errors[name] ? ("error" as const) : undefined,
+    help: errors[name]?.message,
+  });
+
+  return (
+    <Modal
+      className="app-modal"
       title="Filters"
       open={visible}
       onCancel={onClose}
-      closable={false}
+      width={640}
+      centered
       footer={[
-        <Button key="cancel" onClick={onClose} disabled={loading}>
-        Cancel
+        <Button key="reset" danger onClick={handleReset} disabled={isSubmitting}>
+          Reset
         </Button>,
         <Button
           key="apply"
           type="primary"
-          onClick={handleApply}
-          loading={loading}
+          onClick={handleSubmit(onSubmit)}
+          loading={isSubmitting}
         >
           Apply
         </Button>,
       ]}
     >
       <Form layout="vertical">
-        <Form.Item label="Roles" style={{ marginBottom: "8px" }}>
-          <Select
-            value={role || undefined}
-            onChange={(value) => setRole(value as Role)}
-            allowClear
-            placeholder="All Roles"
-          >
-            <Select.Option value="ADMIN">Admin</Select.Option>
-            <Select.Option value="USER">User</Select.Option>
-          </Select>
-        </Form.Item>
+        <Row gutter={24}>
+          <Col xs={24} md={12}>
+            <Form.Item label="Role" {...fieldStatus("role")}>
+              <Controller
+                name="role"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    value={field.value || undefined}
+                    onChange={(v) => field.onChange(v ?? "")}
+                    allowClear
+                    placeholder="All Roles"
+                  >
+                    <Select.Option value="ADMIN">Admin</Select.Option>
+                    <Select.Option value="USER">User</Select.Option>
+                  </Select>
+                )}
+              />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={12}>
+            <Form.Item label="Status" {...fieldStatus("status")}>
+              <Controller
+                name="status"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    value={field.value || undefined}
+                    onChange={(v) => field.onChange(v ?? "")}
+                    allowClear
+                    placeholder="All Status"
+                  >
+                    <Select.Option value="active">Active</Select.Option>
+                    <Select.Option value="Inactive">Inactive</Select.Option>
+                  </Select>
+                )}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
 
-        <Form.Item label="Status" style={{ marginBottom: "8px" }}>
-          <Select
-            value={status || undefined}
-            onChange={(value) => setStatus(value as Status)}
-            allowClear
-            placeholder="All Status"
-          >
-            <Select.Option value="active">Active</Select.Option>
-            <Select.Option value="Inactive">Inactive</Select.Option>
-          </Select>
-        </Form.Item>
-
-        {/* ✅ Replace Month filter with Date Range Picker */}
-        <Form.Item label="Date Range" style={{ marginBottom: "30px" }}>
-          <RangePicker
-            value={dateRange || null}
-            onChange={(dates) => setDateRange(dates as [Dayjs, Dayjs] | null)}
-            format="YYYY-MM-DD"
-            style={{ width: "100%" }}
-            allowClear
-            dropdownClassName="custom-range-picker"
-          />
-        </Form.Item>
+        {/* Joined date: separate From / To pickers (single-month calendar) */}
+        <Row gutter={24}>
+          <Col xs={24} md={12}>
+            <Form.Item label="From date" {...fieldStatus("fromDate")}>
+              <Controller
+                name="fromDate"
+                control={control}
+                render={({ field }) => (
+                  <DatePicker
+                    value={field.value}
+                    onChange={(d) => field.onChange(d ?? null)}
+                    format={DATE_FORMAT}
+                    placeholder="Select date"
+                    prefix={<CalendarDays size={16} />}
+                    suffixIcon={null}
+                    allowClear
+                    style={{ width: "100%" }}
+                    classNames={{ popup: { root: "app-date-popup" } }}
+                    disabledDate={(d) => d.isAfter(dayjs(), "day") || (!!toDate && d.isAfter(toDate, "day"))}
+                  />
+                )}
+              />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={12}>
+            <Form.Item label="To date" {...fieldStatus("toDate")}>
+              <Controller
+                name="toDate"
+                control={control}
+                render={({ field }) => (
+                  <DatePicker
+                    value={field.value}
+                    onChange={(d) => field.onChange(d ?? null)}
+                    format={DATE_FORMAT}
+                    placeholder="Select date"
+                    prefix={<CalendarDays size={16} />}
+                    suffixIcon={null}
+                    allowClear
+                    style={{ width: "100%" }}
+                    classNames={{ popup: { root: "app-date-popup" } }}
+                    disabledDate={(d) => d.isAfter(dayjs(), "day") || (!!fromDate && d.isBefore(fromDate, "day"))}
+                  />
+                )}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
       </Form>
     </Modal>
-    </>
   );
 }
-

@@ -54,9 +54,9 @@ function AppLayout() {
         sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"
       }`}
     >
-      <Sidebar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
+      <Navbar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
+      <Sidebar sidebarOpen={sidebarOpen} />
       <div className="main">
-        <Navbar />
         <div className="content">
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
@@ -100,7 +100,7 @@ export default function App() {
         </Routes>
         <InternetStatus />
       </BrowserRouter>
-      <ToastContainer position="bottom-left" />
+      <ToastContainer position="bottom-right" />
     </AuthProvider>
   );
 }

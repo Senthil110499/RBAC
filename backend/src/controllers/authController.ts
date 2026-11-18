@@ -5,27 +5,10 @@ import { generateToken } from "../utils/token";
 import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
-// ✅ Utility functions for validation
-const isValidEmail = (email: string): boolean => {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-};
-
-const isStrongPassword = (password: string): boolean => {
-  // At least 8 chars, one uppercase, one lowercase, one number, one special char
-  const strongPasswordRegex =
-    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-  return strongPasswordRegex.test(password);
-};
+// Request bodies are validated by Zod (validation/schemas.ts) in the routes
 
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
-    if (!email || !password) {
-    return res.status(400).json({ message: "Email and password are required" });
-  }
-  if (!isValidEmail(email)) {
-    return res.status(400).json({ message: "Invalid email format" });
-  }
 
   try {
     const user = await prisma.user.findUnique({ where: { email } });
@@ -51,10 +34,6 @@ export const login = async (req: Request, res: Response) => {
 export const changePassword = async (req: Request, res: Response) => {
   try {
     const { email, oldPassword, newPassword } = req.body;
-
-    if (!email || !oldPassword || !newPassword) {
-      return res.status(400).json({ message: "All fields are required" });
-    }
 
     // 1. Find user by email
     const user = await prisma.user.findUnique({ where: { email } });

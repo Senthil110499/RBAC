@@ -1,8 +1,31 @@
 import { http } from "./http";
 import type { IUser, Role } from "../types";
 
+export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+
+export interface UserListParams {
+  page: number;
+  limit: number;
+  search?: string;
+  role?: string;
+  status?: string;
+  fromDate?: string;
+  toDate?: string;
+}
+
+export interface PaginatedUsers {
+  data: IUser[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export const userApi = {
   getAll: () => http.get<IUser[]>("/users"),
+
+  getPaginated: (params: UserListParams) =>
+    http.get<PaginatedUsers>("/users", { params }),
 
   create: (payload: { name?: string | null; email: string; role: Role }) =>
     http.post("/users/create", payload),

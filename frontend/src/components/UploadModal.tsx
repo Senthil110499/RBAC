@@ -1,9 +1,12 @@
 
-import { useState } from "react";
 import { Modal, Button } from "antd";
 import { UploadCloud } from "lucide-react";
 import { toast } from "react-toastify";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { userApi } from "../api/userApi";
+import { uploadSchema, MAX_UPLOAD_MB, type UploadValues } from "../validation/schemas";
+import { serverMessage } from "../validation/serverErrors";
 
 interface UploadModalProps {
   visible: boolean;
@@ -12,31 +15,35 @@ interface UploadModalProps {
 }
 
 export default function UploadModal({ visible, onClose, onSuccess }: UploadModalProps) {
-  const [file, setFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
+  const {
+    handleSubmit,
+    setValue,
+    reset,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<UploadValues>({
+    resolver: zodResolver(uploadSchema),
+    defaultValues: { file: null },
+  });
+  const file = watch("file");
+  const loading = isSubmitting;
 
-  const handleUpload = async () => {
-    if (!file) return toast.error("Please select an Excel file");
+  const pickFile = (f: File | null) => setValue("file", f, { shouldValidate: true });
 
-    const allowedTypes = [
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.ms-excel",
-    ];
-    if (!allowedTypes.includes(file.type)) {
-      return toast.error("Only .xlsx or .xls files are allowed");
-    }
+  const closeModal = () => {
+    reset({ file: null });
+    onClose();
+  };
 
+  const onUpload = async ({ file }: UploadValues) => {
+    if (!file) return;
     try {
-      setLoading(true);
       await userApi.uploadExcel(file);
       toast.success("Upload successfully");
       onSuccess();
-      setFile(null);
-      onClose();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || "Upload failed");
-    } finally {
-      setLoading(false);
+      closeModal();
+    } catch (err) {
+      toast.error(serverMessage(err, "Upload failed"));
     }
   };
 
@@ -71,35 +78,35 @@ export default function UploadModal({ visible, onClose, onSuccess }: UploadModal
         </div>
       )}
       <Modal
-        title="Upload File"
+        className="app-modal"
+        title="Import Users"
         open={visible}
-        onCancel={() => {
-          onClose();
-          setFile(null);
-        }}
-        footer={null}
+        onCancel={closeModal}
+        width={640}
         centered
         destroyOnHidden
-        closable={false}
+        footer={[
+          <Button key="cancel" onClick={closeModal}>
+            Cancel
+          </Button>,
+          <Button key="upload" type="primary" loading={loading} onClick={handleSubmit(onUpload)}>
+            {loading ? "Uploading..." : "Upload"}
+          </Button>,
+        ]}
       >
         {/* Download Sample */}
-        <Button
-          onClick={downloadSample}
-          block
-          style={{ marginBottom: 10, width: 170, marginLeft: 300 }}
-          type="primary"
-        >
-          Download Sample File
-        </Button>
+        <div className="app-modal-row-between">
+          <span className="app-modal-help">Upload an Excel file (.xlsx or .xls) with name, email, role and status columns.</span>
+          <Button onClick={downloadSample}>Download sample</Button>
+        </div>
 
         <div
-          className="upload-box"
+          className={`upload-box ${errors.file ? "error" : ""}`}
           onClick={() => document.getElementById("fileInput")?.click()}
-          style={{
-            borderRadius: 6,
-            padding: 24,
-            textAlign: "center",
-            cursor: "pointer",
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            pickFile(e.dataTransfer.files?.[0] || null);
           }}
         >
           <UploadCloud className="upload-icon" size={48} />
@@ -108,23 +115,22 @@ export default function UploadModal({ visible, onClose, onSuccess }: UploadModal
           ) : (
             <p>
               Drag files here or <span className="browse">browse</span>
+              <br />
+              <small>.xlsx or .xls, up to {MAX_UPLOAD_MB} MB</small>
             </p>
           )}
           <input
             id="fileInput"
             type="file"
             accept=".xlsx,.xls"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            onChange={(e) => {
+              pickFile(e.target.files?.[0] || null);
+              e.target.value = ""; // allow re-selecting the same file
+            }}
             hidden
           />
         </div>
-
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 16, marginTop: 20, }}>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button type="primary" loading={loading} onClick={handleUpload}>
-            {loading ? "Uploading..." : "Upload"}
-          </Button>
-        </div>
+        {errors.file && <p className="app-modal-error" role="alert">{errors.file.message}</p>}
       </Modal>
     </>
   );

@@ -1,4 +1,4 @@
-FROM node:18
+FROM node:26
 
 WORKDIR /app
 
@@ -12,6 +12,6 @@ RUN npm run build
 
 RUN npx prisma generate
 
-EXPOSE 5010
+EXPOSE 5015
 
 CMD ["npm", "start"]

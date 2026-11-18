@@ -1,11 +1,29 @@
-import { useState, useEffect } from "react";
-import { Modal, Form, Input, Select, Empty, Tooltip } from "antd";
+import { useEffect } from "react";
+import { Modal, Form, Input, Select, Empty, Tooltip, Row, Col } from "antd";
 import { toast } from "react-toastify";
-import { Edit, Trash } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { userApi } from "../api/userApi";
 import type { IUser } from "../types";
+import { userFormSchema, type UserFormValues } from "../validation/schemas";
+import { applyServerErrors, serverMessage } from "../validation/serverErrors";
 
 // UserTable
+
+const AVATAR_COLORS = [
+  { bg: "#e0f2fe", fg: "#0369a1" },
+  { bg: "#fce7f3", fg: "#be185d" },
+  { bg: "#ede9fe", fg: "#6d28d9" },
+  { bg: "#dcfce7", fg: "#15803d" },
+  { bg: "#fef3c7", fg: "#b45309" },
+];
+
+const initials = (u: IUser) => {
+  const parts = (u.name || u.email || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (parts[0] || "").slice(0, 2).toUpperCase();
+};
 
 interface UserTableProps {
   users: IUser[];
@@ -20,6 +38,9 @@ interface UserTableProps {
   setCurrentPage: (page: number) => void;
   showActions?: boolean;
   className?: string;
+  // Server-side pagination: `users` is already the current page
+  pageSizeOptions?: number[];
+  onPageSizeChange?: (size: number) => void;
 }
 
 export function UserTable({
@@ -35,186 +56,156 @@ export function UserTable({
   setCurrentPage,
   showActions = true,
   className,
+  pageSizeOptions,
+  onPageSizeChange,
 }: UserTableProps) {
   const indexOfFirstUser = (currentPage - 1) * usersPerPage;
-  const currentUsers = users.slice(
-    indexOfFirstUser,
-    indexOfFirstUser + usersPerPage
-  );
-  const actionColumnVisible =
-    showActions &&
-    ["SUPERADMIN", "ADMIN"].includes((userRole || "").toUpperCase());
+  const currentUsers = pageSizeOptions ? users : users.slice(indexOfFirstUser, indexOfFirstUser + usersPerPage);
+  const pages = Math.max(1, totalPages);
 
-  const colspan = 5 + (actionColumnVisible ? 1 : 0);
+  const role = (userRole || "").toUpperCase();
+  const canManage = showActions && ["SUPERADMIN", "ADMIN"].includes(role);
+  const canDelete = role === "SUPERADMIN";
+  const colspan = 4 + (canManage ? 2 : 0);
 
   return (
-    <div>
-      <table
-        className={`users-table ${className || ""} ${
-          (userRole || "").toUpperCase() === "USER" ? "dashboard-table" : ""}`}>
-        <thead>
-          <tr>
-            <th className="users-cell">S.No</th>
-            <th className="users-cell">Name</th>
-            <th className="users-cell">Email</th>
-            <th className="users-cell">Role</th>
-            <th className="users-cell">Status</th>
-            {actionColumnVisible && <th className="users-cell">Actions</th>}
-          </tr>
-        </thead>
-
-        <tbody>
-          {loading ? (
+    <div className={className}>
+      <div className="um-table-wrap">
+        <table className="um-table">
+          <thead>
             <tr>
-              <td
-                colSpan={colspan}
-                style={{ textAlign: "center", padding: 28 }}
-              >
-                <div>Loading...</div>
-              </td>
+              <th className="um-col-index">S.No</th>
+              <th className="um-col-user">
+                <span className="um-user-head">User</span>
+              </th>
+              <th>Role</th>
+              <th>Status</th>
+              {canManage && <th>Access</th>}
+              {canManage && <th className="um-col-actions">Actions</th>}
             </tr>
-          ) : currentUsers.length === 0 ? (
-            <tr>
-              <td colSpan={colspan} style={{ padding: 28 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <Empty style={{ fontSize: 10, color: "#999" }} />
-                </div>
-              </td>
-            </tr>
-          ) : (
-            currentUsers.map((u, idx) => {
-              const isActive = (u.status || "").toLowerCase() === "active";
-              return (
-                <tr key={u.id}>
-                  <td className="users-cell">{indexOfFirstUser + idx + 1}</td>
-                  <td className="users-cell">{u.name || "-"}</td>
-                  <td className="users-cell">{u.email}</td>
-                  <td className="users-cell">{u.role}</td>
-                  <td className="users-cell">
-                    <span
-                      className={`status-badge ${
-                        isActive ? "active" : "Inactive"
-                      }`}
-                    >
-                      {isActive ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-
-                  {actionColumnVisible && (
-                    <td className="users-cell action-buttons">
-                      <div
-                        className="action-icons"
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          alignItems: "center",
-                        }}
-                      >
-                        <Tooltip
-                          title={
-                            isActive
-                              ? "Click to deactivate user"
-                              : "Click to activate user"
-                          }
-                        >
-                          <label className="switch" style={{ margin: 0 }}>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={colspan} className="um-empty">Loading...</td>
+              </tr>
+            ) : currentUsers.length === 0 ? (
+              <tr>
+                <td colSpan={colspan} className="um-empty">
+                  <Empty description="No users found" />
+                </td>
+              </tr>
+            ) : (
+              currentUsers.map((u, idx) => {
+                const isActive = (u.status || "").toLowerCase() === "active";
+                const avatar = AVATAR_COLORS[(indexOfFirstUser + idx) % AVATAR_COLORS.length];
+                return (
+                  <tr key={u.id}>
+                    <td className="um-col-index">{indexOfFirstUser + idx + 1}</td>
+                    <td className="um-col-user">
+                      <div className="um-user">
+                        <span className="um-avatar" style={{ background: avatar.bg, color: avatar.fg }}>
+                          {initials(u)}
+                        </span>
+                        <div>
+                          <div className="um-user-name">{u.name || "-"}</div>
+                          <div className="um-user-email">{u.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <span className={`um-pill role-${String(u.role).toLowerCase()}`}>{u.role}</span>
+                    </td>
+                    <td>
+                      <span className={`um-status ${isActive ? "active" : "inactive"}`}>
+                        <span className="um-status-dot" />
+                        {isActive ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    {canManage && (
+                      <td>
+                        <Tooltip title={isActive ? "Click to deactivate user" : "Click to activate user"}>
+                          <label className="um-switch">
                             <input
                               type="checkbox"
                               checked={isActive}
-                              onChange={() =>
-                                toggleStatus && toggleStatus(u.id!)
-                              }
+                              onChange={() => toggleStatus && toggleStatus(u.id!)}
                             />
-                            <span className="slider round" />
+                            <span className="um-switch-track" />
                           </label>
                         </Tooltip>
-
-                        <Tooltip title="Edit">
-                          <span
-                            className="icon-btn edit-icon"
-                            onClick={() => setEditingUser && setEditingUser(u)}
-                            style={{ cursor: "pointer" }}
-                          >
-                            <Edit size={18} color="blue" />
-                          </span>
-                        </Tooltip>
-
-                        {(userRole || "").toUpperCase() === "SUPERADMIN" && (
-                          <Tooltip title="Delete">
-                            <span
-                              className="icon-btn delete-icon"
-                              onClick={() => setDeleteId && setDeleteId(u.id!)}
-                              style={{ cursor: "pointer" }}
+                      </td>
+                    )}
+                    {canManage && (
+                      <td className="um-col-actions">
+                        <div className="um-actions">
+                          <Tooltip title="Edit">
+                            <button
+                              className="um-icon-btn"
+                              onClick={() => setEditingUser && setEditingUser(u)}
+                              aria-label={`Edit ${u.name || u.email}`}
                             >
-                              <Trash size={18} color="red" />
-                            </span>
+                              <Pencil size={16} />
+                            </button>
                           </Tooltip>
-                        )}
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              );
-            })
-          )}
-
-          {/* filler rows */}
-          {!loading &&
-            currentUsers.length > 0 &&
-            currentUsers.length < usersPerPage &&
-            Array.from({ length: usersPerPage - currentUsers.length }).map(
-              (_, i) => (
-                <tr key={`empty-${i}`} className="empty-row">
-                  <td colSpan={colspan}>&nbsp;</td>
-                </tr>
-              )
+                          {canDelete && (
+                            <Tooltip title="Delete">
+                              <button
+                                className="um-icon-btn danger"
+                                onClick={() => setDeleteId && setDeleteId(u.id!)}
+                                aria-label={`Delete ${u.name || u.email}`}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </Tooltip>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })
             )}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
 
-      {users.length > usersPerPage && (
-        <div className="users-controls" style={{ marginTop: 12 }}>
-          <div
-            className="pagination"
-            style={{
-              display: "flex",
-              gap: 12,
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-          >
-            <button
-              disabled={currentPage === 1}
-              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-            >
-              Prev
-            </button>
-            <span>
-              Page {currentPage} of {totalPages || 1}
-            </span>
-            <button
-              disabled={currentPage === totalPages}
-              onClick={() =>
-                setCurrentPage(Math.min(totalPages, currentPage + 1))
-              }
-            >
-              Next
-            </button>
-          </div>
+      <div className="um-footer">
+        <div className="um-footer-left">
+          <span>Page {currentPage} of {pages}</span>
+          {pageSizeOptions && onPageSizeChange && (
+            <label className="um-page-size">
+              Rows per page
+              <select value={usersPerPage} onChange={(e) => onPageSizeChange(Number(e.target.value))}>
+                {pageSizeOptions.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
-      )}
+        <div className="um-pager">
+          <button disabled={currentPage <= 1} onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}>
+            Previous
+          </button>
+          <button disabled={currentPage >= pages} onClick={() => setCurrentPage(Math.min(pages, currentPage + 1))}>
+            Next
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 // UserModal
+
+// Shared modal form label: "Label *" (asterisk after the text, like the design)
+const appRequiredMark = (label: React.ReactNode, { required }: { required: boolean }) => (
+  <>
+    {label}
+    {required && <span className="app-modal-req">*</span>}
+  </>
+);
 
 interface UserModalProps {
   mode: "add" | "edit";
@@ -224,26 +215,32 @@ interface UserModalProps {
 }
 
 export function UserModal({ mode, user, close, onSuccess }: UserModalProps) {
-  const [form] = Form.useForm();
-  const [loading, setLoading] = useState(false);
+  const {
+    control,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<UserFormValues>({
+    resolver: zodResolver(userFormSchema),
+    mode: "onTouched",
+    defaultValues: { name: "", email: "", role: "USER" },
+  });
 
   useEffect(() => {
     if (mode === "edit" && user) {
-      form.setFieldsValue({
-        name: user.name,
+      reset({
+        name: user.name || "",
         email: user.email,
-        role: user.role,
+        role: user.role === "ADMIN" ? "ADMIN" : "USER",
       });
     } else {
-      form.resetFields();
+      reset({ name: "", email: "", role: "USER" });
     }
-  }, [mode, user, form]);
+  }, [mode, user, reset]);
 
-  const handleSubmit = async () => {
+  const onSubmit = async (values: UserFormValues) => {
     try {
-      const values = await form.validateFields();
-      setLoading(true);
-
       if (mode === "add") {
         const res = await userApi.create(values);
         toast.success("User created successfully!");
@@ -253,68 +250,82 @@ export function UserModal({ mode, user, close, onSuccess }: UserModalProps) {
         toast.success("User updated successfully!");
         onSuccess({ ...user, ...values });
       }
-
       close();
-    } catch (err: any) {
-      if (!err?.errorFields) {
-        toast.error(err?.response?.data?.message || "Something went wrong");
+    } catch (err) {
+      if (!applyServerErrors(err, setError, ["name", "email", "role"])) {
+        toast.error(serverMessage(err, "Something went wrong"));
       }
-    } finally {
-      setLoading(false);
     }
   };
 
+  // antd Form.Item is used for layout/label only; values & rules live in React Hook Form
+  const fieldStatus = (name: keyof UserFormValues) => ({
+    validateStatus: errors[name] ? ("error" as const) : undefined,
+    help: errors[name]?.message,
+  });
+
   return (
     <>
-      {loading && (
+      {isSubmitting && (
         <div className="overlay">
           <div className="spinner"></div>
         </div>
       )}
       <Modal
+        className="app-modal"
         title={mode === "add" ? "Add User" : "Edit User"}
         open={true}
         onCancel={close}
-        onOk={handleSubmit}
-        confirmLoading={loading}
+        onOk={handleSubmit(onSubmit)}
+        confirmLoading={isSubmitting}
         okText={mode === "add" ? "Create" : "Save"}
         cancelText="Cancel"
+        width={720}
+        centered
         destroyOnHidden
-        closable={false}
       >
-        <Form form={form} layout="vertical" initialValues={{ role: "USER" }}>
-          <Form.Item
-            label="Name"
-            name="name"
-            style={{ marginBottom: "8px" }}
-            rules={[{ required: true, message: "Please enter a name" }]}
-          >
-            <Input placeholder="Name" />
-          </Form.Item>
-
-          <Form.Item
-            label="Email"
-            name="email"
-            style={{ marginBottom: "8px" }}
-            rules={[
-              { required: true, message: "Please enter an email" },
-              { type: "email", message: "Enter a valid email" },
-            ]}
-          >
-            <Input placeholder="Email" />
-          </Form.Item>
-
-          <Form.Item
-            label="Role"
-            name="role"
-            style={{ marginBottom: "16px" }}
-            rules={[{ required: true, message: "Please select a role" }]}
-          >
-            <Select placeholder="Select role">
-              <Select.Option value="ADMIN">Admin</Select.Option>
-              <Select.Option value="USER">User</Select.Option>
-            </Select>
-          </Form.Item>
+        <Form layout="vertical" requiredMark={appRequiredMark} onFinish={() => handleSubmit(onSubmit)()}>
+          <Row gutter={24}>
+            <Col xs={24} md={12}>
+              <Form.Item label="Name" htmlFor="user-name" required {...fieldStatus("name")}>
+                <Controller
+                  name="name"
+                  control={control}
+                  render={({ field }) => <Input id="user-name" placeholder="Enter full name" {...field} />}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="Email" htmlFor="user-email" required {...fieldStatus("email")}>
+                <Controller
+                  name="email"
+                  control={control}
+                  render={({ field }) => <Input id="user-email" placeholder="Enter email" {...field} />}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="Role" htmlFor="user-role" required {...fieldStatus("role")}>
+                <Controller
+                  name="role"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      id="user-role"
+                      placeholder="Select role"
+                      value={field.value}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    >
+                      <Select.Option value="ADMIN">Admin</Select.Option>
+                      <Select.Option value="USER">User</Select.Option>
+                    </Select>
+                  )}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
     </>

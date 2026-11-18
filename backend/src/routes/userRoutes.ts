@@ -1,28 +1,33 @@
 import express from "express";
-import multer from "multer";
 import { createUser, deleteUser, getUsers, updateUser,toggleUser, uploadExcel, getUserRole, getUserStatus, downloadUsers } from "../controllers/userController";
 import { authMiddleware, hasPermission } from "../middleware/authMiddleware";
+import { validate, validateExcelUpload } from "../middleware/validate";
+import {
+  createUserSchema,
+  updateUserSchema,
+  userIdParams,
+  userListQuery,
+  userFilterQuery,
+  statsQuery,
+} from "../validation/schemas";
 
 const router = express.Router();
 
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
-
 router.use(authMiddleware);
 
-router.get("/", hasPermission("read"), getUsers);
-router.post("/create", hasPermission("write"), createUser);
-router.patch("/status/:id", hasPermission("update"), toggleUser);
-router.put("/:id", hasPermission("update"), updateUser);
-router.delete("/:id", hasPermission("delete"), deleteUser);
+router.get("/", hasPermission("read"), validate({ query: userListQuery }), getUsers);
+router.post("/create", hasPermission("write"), validate({ body: createUserSchema }), createUser);
+router.patch("/status/:id", hasPermission("update"), validate({ params: userIdParams }), toggleUser);
+router.put("/:id", hasPermission("update"), validate({ params: userIdParams, body: updateUserSchema }), updateUser);
+router.delete("/:id", hasPermission("delete"), validate({ params: userIdParams }), deleteUser);
 
-router.get("/roles", hasPermission("read"), getUserRole);
-router.get("/status", hasPermission("read"), getUserStatus);
+router.get("/roles", hasPermission("read"), validate({ query: statsQuery }), getUserRole);
+router.get("/status", hasPermission("read"), validate({ query: statsQuery }), getUserStatus);
 
-// Upload Excel
-router.post("/upload", hasPermission("write"), upload.single("file"), uploadExcel);
+// Upload Excel (.xlsx/.xls, max 5 MB; rows are validated in the controller)
+router.post("/upload", hasPermission("write"), validateExcelUpload, uploadExcel);
 
-router.get("/download", hasPermission("read"), downloadUsers);
+router.get("/download", hasPermission("read"), validate({ query: userFilterQuery }), downloadUsers);
 
 
 export default router;
